@@ -41,6 +41,41 @@ func BenchmarkParseUint(b *testing.B) {
 	}
 }
 
+// floatBenchInputs are representative ParseFloat cases: a short fraction, a
+// 15-significant-digit fraction, a large-exponent value, and a 17-significant-
+// digit value (the round-trip stressor). All take the SIMD/Eisel-Lemire fast
+// path except where the fast path conservatively declines (reported honestly).
+var floatBenchInputs = []struct {
+	name string
+	s    string
+}{
+	{"3.14159", "3.14159"},
+	{"15sig", "1234567890.12345"},
+	{"1e308", "1e308"},
+	{"17sig", "1.7976931348623157"},
+}
+
+func BenchmarkParseFloat(b *testing.B) {
+	for _, in := range floatBenchInputs {
+		b.Run(in.name+"/simd", func(b *testing.B) {
+			b.SetBytes(int64(len(in.s)))
+			var sink float64
+			for i := 0; i < b.N; i++ {
+				sink, _ = ParseFloat(in.s, 64)
+			}
+			_ = sink
+		})
+		b.Run(in.name+"/std", func(b *testing.B) {
+			b.SetBytes(int64(len(in.s)))
+			var sink float64
+			for i := 0; i < b.N; i++ {
+				sink, _ = stdconv.ParseFloat(in.s, 64)
+			}
+			_ = sink
+		})
+	}
+}
+
 func BenchmarkAtoi(b *testing.B) {
 	for _, in := range benchInputs {
 		b.Run(in.name+"/simd", func(b *testing.B) {

@@ -9,3 +9,10 @@ package strconv
 func parseDigitsSIMD(s string) (uint64, bool) {
 	return parseScalar(s, 0, 0)
 }
+
+// parse16Window folds the 16 bytes at s[i:i+16] as decimal digits with the
+// scalar loop (no SIMD kernel on this architecture). The caller guarantees
+// i+16 <= len(s). It returns ok == false if any byte is not a decimal digit.
+func parse16Window(s string, i int) (uint64, bool) {
+	return parseScalar(s[i:i+16], 0, 0)
+}

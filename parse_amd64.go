@@ -40,3 +40,14 @@ func parseDigitsSIMD(s string) (uint64, bool) {
 	// Finish the 0..3-digit tail (n is 16..19) with the scalar loop.
 	return parseScalar(s, 16, val)
 }
+
+// parse16Window folds the 16 bytes at s[i:i+16] as decimal digits via the SSE
+// kernel. The caller guarantees i+16 <= len(s). It returns ok == false (so the
+// float fast path falls back to a scalar digit-by-digit scan, or ultimately to
+// strconv) if any of those 16 bytes is not an ASCII decimal digit.
+func parse16Window(s string, i int) (uint64, bool) {
+	base := unsafe.StringData(s)
+	p := (*byte)(unsafe.Add(unsafe.Pointer(base), i))
+	val, ok := parse16SSE(p)
+	return val, ok == 1
+}
