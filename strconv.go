@@ -24,14 +24,15 @@ import "strconv"
 const maxFastDigits = 19
 
 // minFastDigits is the shortest digit run we route through the SIMD kernel for
-// ParseUint / ParseInt. The kernel parses eight digits per call (a real CALL,
-// not inlined), so for short strings the per-call overhead exceeds the
-// digit-crunch win and the standard library's tight scalar loop is faster.
-// Benchmarks (native amd64, GOAMD64=v3) show the SIMD path overtakes
-// strconv.ParseUint once two full 8-digit groups are present (16+ digits);
-// below this floor we delegate to strconv, which is both correct AND faster, so
-// the package never regresses. Correctness is unaffected: the fallback is the
-// real strconv, so value and error stay byte-identical either way.
+// ParseUint / ParseInt. The kernel reads and folds a full 16-byte group per call
+// (a real CALL, not inlined), so it needs at least sixteen digits present; for
+// shorter strings there is no 16-byte group to vectorise and the standard
+// library's tight inlined scalar loop is faster anyway. Benchmarks (native
+// amd64) show the single-call 16-digit kernel overtakes strconv.ParseUint at 16
+// digits and widens through 19; below this floor we delegate to strconv, which
+// is both correct AND faster, so the package never regresses. Correctness is
+// unaffected: the fallback is the real strconv, so value and error stay
+// byte-identical either way.
 const minFastDigits = 16
 
 // minAtoiDigits is the Atoi-specific floor. strconv.Atoi has an *inlined*
@@ -118,7 +119,7 @@ const maxInt = int(^uint(0) >> 1)
 // length bound guarantees the accumulated value cannot overflow uint64, so when
 // ok is true the value is exact.
 //
-// It uses the SIMD 8-digit kernel for the bulk on amd64 (see parseDigitsSIMD)
+// It uses the SIMD 16-digit kernel for the bulk on amd64 (see parseDigitsSIMD)
 // and a digit-at-a-time scalar loop for the short remainder and on other
 // architectures.
 func parseDigits(s string) (uint64, bool) {
@@ -126,8 +127,8 @@ func parseDigits(s string) (uint64, bool) {
 }
 
 // parseScalar parses s[i:] one digit at a time into the running value v. It is
-// the architecture-independent core, also used to finish the tail after the
-// SIMD kernel has consumed whole 8-digit groups.
+// the architecture-independent core, also used to finish the 0..3-digit tail
+// after the SIMD kernel has consumed the leading 16-digit group.
 func parseScalar(s string, i int, v uint64) (uint64, bool) {
 	for ; i < len(s); i++ {
 		d := s[i] - '0'

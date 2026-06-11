@@ -48,90 +48,94 @@ native CI). 100 % statement coverage.
 
 | op | amd64 | arm64 / loong64 / riscv64 |
 |---|---|---|
-| **ParseUint / ParseInt / Atoi (base 10)** | **SSE2/SSSE3** 8-digit kernel | scalar — NEON/LSX/RVV planned |
+| **ParseUint / ParseInt / Atoi (base 10)** | **SSE2/SSSE3** 16-digit kernel | scalar — NEON/LSX/RVV planned |
 
 ## How it works
 
-The Lemire "parse a number at a gigabyte per second" SIMD decimal core, applied
-to whole 8-digit groups (per group, on amd64 SSE):
+The Lemire "parse a number at a gigabyte per second" SIMD decimal core, folding a
+whole 16-digit group in **one** assembly call (on amd64 SSE):
 
-- **Load** the 8 chars into an XMM register (`MOVQ`).
-- **Validate** — `d = c-'0'` (`PSUBB`); a char is a decimal digit iff
-  `0 <= d <= 9`, tested with two `PCMPGTB` (signed; digit chars are `< 0x80` so
-  the sign bit is clear). If any of the eight lanes is out of range, `PMOVMSKB`
-  of the inverted mask is non-zero and the group is rejected (the Go wrapper
-  then re-walks it scalarly so a non-digit ends the run exactly as `strconv`).
-- **Fuse** digits → value:
-  - `PMADDUBSW [10,1,…]` : 8 digit bytes → 4 words, each a 2-digit value
+- **Load** the 16 chars into an XMM register (`MOVOU`).
+- **Validate** — a char is a decimal digit iff `('0'-1) < c < ('9'+1)`, tested
+  with two `PCMPGTB` (signed; digit chars are `< 0x80` so the sign bit is clear).
+  All sixteen lanes must pass: `PMOVMSKB` of the isDigit mask must be `0xFFFF`,
+  else the group is rejected (the Go wrapper then re-walks it scalarly so a
+  non-digit ends the run exactly as `strconv`).
+- **Fuse** digits → value (`PSUBB '0'` first, giving 16 digit bytes 0..9):
+  - `PMADDUBSW [10,1,…]` : 16 digit bytes → 8 words, each a 2-digit value
     `10·hi + lo`.
-  - `PMULLW [100,1,…]` + `PHADDW` : adjacent words → 2 words, each a 4-digit
-    value (`< 10000`, fits a word). *(The SSE2 `PMADDWD` form that would do this
-    in one op is **not recognised by Go's assembler** — see below — so we use
-    `PMULLW`+`PHADDW`.)*
-  - The final `hi·10000 + lo` would overflow 16 bits, so the two 4-digit words
-    are returned to Go (`PEXTRW`) and combined there with one 32-bit multiply.
-    This keeps the assembly trivially correct.
+  - `PMADDWL [100,1,…]` : 8 words → 4 dwords, each a 4-digit value `100·hi + lo`
+    (`< 10000`). `PMADDWL` is Go's mnemonic for SSE2 **`pmaddwd`** — it does the
+    staged word→dword fold in a single instruction (see the note below).
+  - The four 4-digit dwords `c0..c3` are combined in GP registers as
+    `hi = c0·10000 + c1`, `lo = c2·10000 + c3`, `val = hi·1e8 + lo` — three
+    multiplies, keeping the assembly trivially correct.
 
-The Go wrapper consumes whole 8-digit groups (`v = v·1e8 + group`) and finishes
-the short remainder with a scalar loop. The kernel takes a `*byte` (via
+The Go wrapper makes one `parse16SSE` call and finishes the 0..3-digit tail
+(inputs are 16..19 digits) with a scalar loop. The kernel takes a `*byte` (via
 `unsafe.StringData`), so the hot path performs **no `[]byte(s)` allocation**.
 
-### A missing mnemonic
+The single-call 16-digit kernel replaced an earlier two-call 8-digit loop: the
+dominant cost for these short fixed-length inputs is the non-inlinable assembly
+**CALL** (frame setup, register spills around the call, ABI0 wrapper), not the
+digit crunch — so collapsing two calls into one roughly **doubled** the win
+(see *Performance*). `llvm-mca` (Haswell model) also confirms the compute halved:
+the 16-digit fold is ~7 cycles in one block vs ~10 cycles across two 8-digit
+blocks.
 
-The canonical Lemire kernel fuses the four 2-digit words into two 4-digit dwords
-with one **`PMADDWD`** (SSE2, `[100,1,100,1]`). Go's assembler (`go1.26`,
-`cmd/internal/obj/x86`) **does not recognise the SSE2 `PMADDWD` form** — only the
-VEX-encoded `VPMADDWD` is in its instruction table. This package therefore uses
-`PMULLW` + `PHADDW` (both present) for that step; the result is identical. The
-gap is worth an upstream `cmd/asm` patch (cf. the go-simd ecosystem's batched
-`cmd/asm` mnemonic patches).
+### PMADDWL (a previously-thought-missing mnemonic)
+
+The canonical Lemire kernel fuses the 2-digit words into 4-digit dwords with one
+**`pmaddwd`** (SSE2, `[100,1,100,1]`). An earlier version of this package used a
+`PMULLW`+`PHADDW` workaround, believing Go's assembler lacked the SSE2 form. It
+does **not**: Go spells SSE2 `pmaddwd` as **`PMADDWL`** (and the AVX2 form as
+`VPMADDWD`), both present in `cmd/internal/obj/x86`. The kernel now uses
+`PMADDWL` directly — fewer ops on the critical path.
 
 ## Performance
 
-Honest numbers, **native amd64**, `go1.26.4`, median of 8, on a QEMU/KVM Haswell
-guest (the dev box is arm64; the amd64 kernel only runs under Rosetta locally,
-which is unrepresentative, so this uses a native x86_64 VM — CI reproduces it on
-GitHub `ubuntu-latest`). `GOAMD64=v3` (the realistic modern-x86 default;
-instruction scheduling matters for this kernel — see the `v1` caveat below).
-
-Median of 12, `benchtime=0.5s`, separated per function (numbers below are the
-inputs where the SIMD path is actually taken):
+Honest numbers, **native amd64**, `go1.26.4`, median of 8, `benchtime=0.5s`, on a
+QEMU/KVM Haswell guest (the dev box is arm64; the amd64 kernel only runs under
+Rosetta locally, which is unrepresentative, so this uses a native x86_64 VM — CI
+reproduces it on GitHub `ubuntu-latest`). `GOAMD64=v3`. Numbers below are the
+inputs where the SIMD path is actually taken:
 
 | call | SIMD | `strconv` | speedup |
 |---|---:|---:|---:|
-| `ParseUint` 16 digits | **156 ns** | 176 ns | **1.13×** |
-| `ParseUint` 19 digits | **172 ns** | 197 ns | **1.15×** |
-| `Atoi` 19 digits | **177 ns** | 243 ns | **1.37×** |
+| `ParseUint` 16 digits | **75 ns** | 171 ns | **2.29×** |
+| `ParseUint` 17 digits | **80 ns** | 178 ns | **2.22×** |
+| `ParseUint` 18 digits | **82 ns** | 187 ns | **2.29×** |
+| `ParseUint` 19 digits | **87 ns** | 190 ns | **2.19×** |
+| `Atoi` 19 digits | **92 ns** | 244 ns | **2.66×** |
 | `ParseUint`/`Atoi` ≤ 8 digits | delegated → `strconv` | — | 1.00× (no regression) |
 
 Honest findings — this is where SIMD does and does **not** pay:
 
-- **The win is real but narrow, and only on long inputs.** Go's `strconv`
-  scalar parsers are already very tight; for short strings the cost of a
-  non-inlinable assembly **CALL** (`parse8SSE`) plus the per-group `×1e8` swamps
-  the SIMD digit-crunch.
+- **The win is large on long inputs (16–19 digits): ~2.2× for `ParseUint`,
+  ~2.7× for `Atoi` at 19 digits.** Collapsing the old two-call 8-digit loop into
+  a single 16-digit `parse16SSE` call removed the dominant cost — the
+  non-inlinable assembly **CALL** and its register-spill / frame-reload overhead
+  — roughly doubling the previous 1.1–1.4× margins.
+- **Short inputs cannot win, and we don't try.** Go's `strconv` scalar parsers
+  are already very tight, and for < 16 digits there is no full 16-byte group to
+  vectorise; a single non-inlinable assembly CALL costs more than stdlib's
+  inlined scalar loop. So we **delegate every < 16-digit input to `strconv`**,
+  which is both correct and faster — the package never regresses there.
 - **`strconv.Atoi` is special.** It has an *inlined* digit-at-a-time fast path
-  for inputs **shorter than 19 digits** (64-bit), which SIMD cannot beat (at 8
-  digits stdlib Atoi is ~60 ns; the SIMD CALL path is ~115 ns). Only at exactly
-  19 digits does `Atoi` drop to its slower `ParseInt` path — and there SIMD
-  wins **1.37×**. So `Atoi` takes the SIMD path **only at 19 digits**
+  for inputs **shorter than 19 digits** (64-bit) which SIMD cannot beat. Only at
+  exactly 19 digits does `Atoi` drop to its slower `ParseInt` path — and there
+  SIMD wins **2.66×**. So `Atoi` takes the SIMD path **only at 19 digits**
   (`minAtoiDigits`); `ParseUint`/`ParseInt`, which have no such inlined path,
   take it from 16 digits (`minFastDigits`).
-- **So we only take SIMD where it measurably wins**; every shorter input
-  delegates to `strconv`, which is both correct and faster. The package
-  therefore **never regresses** on any input.
-- **`GOAMD64` matters.** Under `v1` (no instruction-scheduling assumptions) the
-  kernel is roughly par/slower; under `v3` (the realistic modern-x86 default) it
-  is the 1.1–1.4× above. The table reports `v3`.
 - **20-digit and overflow inputs** delegate to `strconv` for its exact
   `MaxUint64`/`ErrRange` behaviour (no fast path, no regression).
 
 The takeaway, reported rigorously: this is a **correct** drop-in (fuzz-proven
-value + error equality vs `strconv`) with a **modest, honest** SIMD win
-(1.13–1.37×) on long base-10 inputs, and **parity (never a regression)**
-everywhere else via fallback. Short-string scalar parsing does not benefit
-meaningfully from SIMD — that is the honest result, and the package is
-engineered to never lose because of it.
+value + error equality vs `strconv`) with a **substantial, honest** SIMD win
+(~2.2–2.7×) on long base-10 inputs, and **parity (never a regression)** on short
+inputs via fallback. Short-string scalar parsing does not benefit from SIMD —
+that is the honest result, and the package delegates those cases so it never
+loses.
 
 ## Regenerating the assembly
 

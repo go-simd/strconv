@@ -4,32 +4,33 @@
 
 #include "textflag.h"
 
-TEXT ·parse8SSE(SB), NOSPLIT, $0-24
+TEXT ·parse16SSE(SB), NOSPLIT, $0-24
 	MOVQ p+0(FP), SI
-	MOVQ (SI), X0
-	MOVO X0, X1
-	MOVOU subD<>+0(SB), X2
-	PSUBB X2, X1
+	MOVOU (SI), X0
 	MOVO X0, X3
 	MOVOU cLo<>+0(SB), X4
 	PCMPGTB X4, X3
 	MOVOU cHi<>+0(SB), X4
 	PCMPGTB X0, X4
 	PAND X4, X3
-	PCMPEQB X5, X5
-	PXOR X5, X3
 	PMOVMSKB X3, AX
-	ANDL $0xFF, AX
-	TESTL AX, AX
-	JNZ bad
-	MOVOU madd<>+0(SB), X2
-	PMADDUBSW X2, X1
-	MOVOU mul100<>+0(SB), X2
-	PMULLW X2, X1
-	PHADDW X1, X1
-	PEXTRW $0, X1, AX
-	PEXTRW $1, X1, DX
+	CMPL AX, $0xFFFF
+	JNE bad
+	MOVOU subD<>+0(SB), X2
+	PSUBB X2, X0
+	MOVOU madd1<>+0(SB), X2
+	PMADDUBSW X0, X2
+	MOVOU madd2<>+0(SB), X4
+	PMADDWL X4, X2
+	MOVL X2, AX
+	PEXTRD $1, X2, CX
+	PEXTRD $2, X2, DX
+	PEXTRD $3, X2, DI
 	IMULQ $10000, AX
+	ADDQ CX, AX
+	IMULQ $10000, DX
+	ADDQ DI, DX
+	IMULQ $100000000, AX
 	ADDQ DX, AX
 	MOVQ AX, val+8(FP)
 	MOVQ $1, AX
@@ -95,39 +96,39 @@ DATA subD<>+14(SB)/1, $0x30
 DATA subD<>+15(SB)/1, $0x30
 GLOBL subD<>(SB), RODATA|NOPTR, $16
 
-DATA madd<>+0(SB)/1, $0x0a
-DATA madd<>+1(SB)/1, $0x01
-DATA madd<>+2(SB)/1, $0x0a
-DATA madd<>+3(SB)/1, $0x01
-DATA madd<>+4(SB)/1, $0x0a
-DATA madd<>+5(SB)/1, $0x01
-DATA madd<>+6(SB)/1, $0x0a
-DATA madd<>+7(SB)/1, $0x01
-DATA madd<>+8(SB)/1, $0x0a
-DATA madd<>+9(SB)/1, $0x01
-DATA madd<>+10(SB)/1, $0x0a
-DATA madd<>+11(SB)/1, $0x01
-DATA madd<>+12(SB)/1, $0x0a
-DATA madd<>+13(SB)/1, $0x01
-DATA madd<>+14(SB)/1, $0x0a
-DATA madd<>+15(SB)/1, $0x01
-GLOBL madd<>(SB), RODATA|NOPTR, $16
+DATA madd1<>+0(SB)/1, $0x0a
+DATA madd1<>+1(SB)/1, $0x01
+DATA madd1<>+2(SB)/1, $0x0a
+DATA madd1<>+3(SB)/1, $0x01
+DATA madd1<>+4(SB)/1, $0x0a
+DATA madd1<>+5(SB)/1, $0x01
+DATA madd1<>+6(SB)/1, $0x0a
+DATA madd1<>+7(SB)/1, $0x01
+DATA madd1<>+8(SB)/1, $0x0a
+DATA madd1<>+9(SB)/1, $0x01
+DATA madd1<>+10(SB)/1, $0x0a
+DATA madd1<>+11(SB)/1, $0x01
+DATA madd1<>+12(SB)/1, $0x0a
+DATA madd1<>+13(SB)/1, $0x01
+DATA madd1<>+14(SB)/1, $0x0a
+DATA madd1<>+15(SB)/1, $0x01
+GLOBL madd1<>(SB), RODATA|NOPTR, $16
 
-DATA mul100<>+0(SB)/1, $0x64
-DATA mul100<>+1(SB)/1, $0x00
-DATA mul100<>+2(SB)/1, $0x01
-DATA mul100<>+3(SB)/1, $0x00
-DATA mul100<>+4(SB)/1, $0x64
-DATA mul100<>+5(SB)/1, $0x00
-DATA mul100<>+6(SB)/1, $0x01
-DATA mul100<>+7(SB)/1, $0x00
-DATA mul100<>+8(SB)/1, $0x64
-DATA mul100<>+9(SB)/1, $0x00
-DATA mul100<>+10(SB)/1, $0x01
-DATA mul100<>+11(SB)/1, $0x00
-DATA mul100<>+12(SB)/1, $0x64
-DATA mul100<>+13(SB)/1, $0x00
-DATA mul100<>+14(SB)/1, $0x01
-DATA mul100<>+15(SB)/1, $0x00
-GLOBL mul100<>(SB), RODATA|NOPTR, $16
+DATA madd2<>+0(SB)/1, $0x64
+DATA madd2<>+1(SB)/1, $0x00
+DATA madd2<>+2(SB)/1, $0x01
+DATA madd2<>+3(SB)/1, $0x00
+DATA madd2<>+4(SB)/1, $0x64
+DATA madd2<>+5(SB)/1, $0x00
+DATA madd2<>+6(SB)/1, $0x01
+DATA madd2<>+7(SB)/1, $0x00
+DATA madd2<>+8(SB)/1, $0x64
+DATA madd2<>+9(SB)/1, $0x00
+DATA madd2<>+10(SB)/1, $0x01
+DATA madd2<>+11(SB)/1, $0x00
+DATA madd2<>+12(SB)/1, $0x64
+DATA madd2<>+13(SB)/1, $0x00
+DATA madd2<>+14(SB)/1, $0x01
+DATA madd2<>+15(SB)/1, $0x00
+GLOBL madd2<>(SB), RODATA|NOPTR, $16
 

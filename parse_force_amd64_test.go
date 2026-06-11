@@ -7,44 +7,45 @@ import (
 	"testing"
 )
 
-// TestParse8SSEKernel drives the SSE 8-digit kernel directly over every clean
-// 8-digit value pattern of interest, plus a non-digit byte injected at each of
-// the eight positions, asserting (val, ok) matches an independent computation.
+// TestParse16SSEKernel drives the SSE 16-digit kernel directly over clean
+// 16-digit value patterns of interest, plus a non-digit byte injected at each of
+// the sixteen positions, asserting (val, ok) matches an independent computation.
 // Rosetta executes SSE, so this exercises the real kernel on the dev machine.
-func TestParse8SSEKernel(t *testing.T) {
+func TestParse16SSEKernel(t *testing.T) {
 	clean := []string{
-		"00000000", "00000001", "00000009", "12345678", "99999999",
-		"10000000", "01234567", "87654321", "00000010", "90000000",
+		"0000000000000000", "0000000000000001", "0000000000000009",
+		"1234567812345678", "9999999999999999", "1000000000000000",
+		"0123456789012345", "8765432187654321", "0000000010000000",
+		"9000000000000000",
 	}
 	for _, s := range clean {
-		// Pad to >=8 with trailing digits so the kernel's 8-byte load is in
-		// bounds; we only assert the first group.
-		buf := []byte(s + "00000000")
-		val, ok := parse8SSE(&buf[0])
+		buf := []byte(s)
+		val, ok := parse16SSE(&buf[0])
 		if ok != 1 {
-			t.Fatalf("parse8SSE(%q) ok=%d, want 1", s, ok)
+			t.Fatalf("parse16SSE(%q) ok=%d, want 1", s, ok)
 		}
 		want, _ := stdconv.ParseUint(s, 10, 64)
 		if val != want {
-			t.Fatalf("parse8SSE(%q)=%d want %d", s, val, want)
+			t.Fatalf("parse16SSE(%q)=%d want %d", s, val, want)
 		}
 	}
 
 	// Non-digit at every position must yield ok==0.
 	bad := []byte{'/', ':', '_', ' ', 'a', 'A', '.', 0x00, 0xff}
 	for _, bc := range bad {
-		for off := 0; off < 8; off++ {
-			b := []byte("1234567800000000")
+		for off := 0; off < 16; off++ {
+			b := []byte("1234567812345678")
 			b[off] = bc
-			if _, ok := parse8SSE(&b[0]); ok != 0 {
-				t.Fatalf("parse8SSE with %q at %d: ok=%d want 0", bc, off, ok)
+			if _, ok := parse16SSE(&b[0]); ok != 0 {
+				t.Fatalf("parse16SSE with %q at %d: ok=%d want 0", bc, off, ok)
 			}
 		}
 	}
 }
 
-// TestParseDigitsSIMDGroups checks parseDigitsSIMD across lengths that span
-// multiple 8-digit groups plus a scalar tail, against the standard library.
+// TestParseDigitsSIMDGroups checks parseDigitsSIMD across every length 1..19
+// (the short < 16 lengths take the scalar branch; 16..19 take the kernel plus a
+// 0..3-digit scalar tail), against the standard library.
 func TestParseDigitsSIMDGroups(t *testing.T) {
 	for n := 1; n <= maxFastDigits; n++ {
 		b := make([]byte, n)
@@ -63,13 +64,21 @@ func TestParseDigitsSIMDGroups(t *testing.T) {
 		if v != want {
 			t.Fatalf("parseDigitsSIMD(%q)=%d want %d", s, v, want)
 		}
-		// Inject a bad byte in the second group (offset 8..) to confirm the
-		// kernel's ok==0 path routes through the scalar fallback to ok=false.
-		if n >= 9 {
+		// Inject a bad byte inside the kernel window (offset 0..15) once n>=16 to
+		// confirm the kernel's ok==0 path routes through the scalar fallback to
+		// ok=false; and a bad byte in the tail (offset 16..) for n>16.
+		if n >= 16 {
 			bb := append([]byte(nil), b...)
-			bb[8] = 'x'
+			bb[5] = 'x'
 			if _, ok := parseDigitsSIMD(string(bb)); ok {
-				t.Fatalf("parseDigitsSIMD with bad byte at 8 returned ok=true")
+				t.Fatalf("parseDigitsSIMD with bad byte at 5 returned ok=true")
+			}
+		}
+		if n > 16 {
+			bb := append([]byte(nil), b...)
+			bb[16] = 'x'
+			if _, ok := parseDigitsSIMD(string(bb)); ok {
+				t.Fatalf("parseDigitsSIMD with bad byte at 16 returned ok=true")
 			}
 		}
 	}
