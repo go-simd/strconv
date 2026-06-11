@@ -1,5 +1,8 @@
 # strconv
 
+[![CI](https://github.com/go-simd/strconv/actions/workflows/ci.yml/badge.svg)](https://github.com/go-simd/strconv/actions/workflows/ci.yml)
+![coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
+
 A drop-in fast path for **base-10 integer parsing** whose results — both the
 value **and** the error — are byte-identical to the standard library's
 [`strconv`](https://pkg.go.dev/strconv). The hot case (a clean run of ASCII
@@ -141,6 +144,17 @@ go run parse_gen.go
 go mod edit -droprequire github.com/go-asmgen/asmgen
 go mod tidy
 ```
+
+## Coverage
+
+The CI gate enforces **100% coverage of the Go code** on each arch job (native
+amd64 + native arm64; the `!amd64` generic fallback compiles and is measured on
+arm64). The tests exercise both the SIMD fast path AND every fallback-to-stdlib
+branch (other bases, prefixes, `_` separators, empty input, non-digit bytes,
+overflow at the signed/unsigned boundaries, over-long input, unusual bitSizes).
+Coverage is of the Go statements only: the generated `.s` parse kernel is not
+measured by `go test -cover` — it is validated by differential tests against
+the scalar reference and the standard library, plus fuzzing.
 
 ## License
 
