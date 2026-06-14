@@ -20,9 +20,55 @@ jobs:
       - run: go test -run '^$' -fuzz FuzzParseUint -fuzztime 20s ./...
       - run: go test -run '^$' -fuzz FuzzAtoi -fuzztime 20s ./...
       - run: go test -run '^$' -fuzz FuzzParseInt -fuzztime 20s ./...
+      - run: go test -run '^$' -fuzz FuzzParseFloat -fuzztime 20s ./...
       - name: coverage gate (100%)
         run: |
           go test -covermode=atomic -coverprofile=cov.out ./...
           pct=$(go tool cover -func=cov.out | awk '/^total:/{print $3}')
           echo "coverage=$pct"
           [ "$pct" = "100.0%" ] || { echo "coverage below 100%"; exit 1; }
+
+  # Emulated cross-arch validation for the SIMD kernels that have no native CI
+  # runner: the POWER VSX kernel (ppc64le) and the z/Architecture vector kernel
+  # (s390x). Mirrors go-simd/matchlen's emulated job: qemu via binfmt, the test
+  # binary cross-compiled and run under a debian:trixie container, with a 100%
+  # coverage gate. We additionally install the matching Go toolchain inside the
+  # emulated container and run all four fuzzers natively under qemu (the test
+  # binary alone cannot fuzz), so the kernels are exercised against random input,
+  # not just the seed corpus.
+  emulated:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: ppc64le, image: "debian:trixie", qemu: "power9" }
+          - { arch: s390x,   image: "debian:trixie", qemu: "qemu" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: stable }
+      - run: docker run --privileged --rm tonistiigi/binfmt --install ${{ matrix.arch }}
+      - name: cross-compile test binary
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.arch }} go test -c -cover -o /tmp/t.test .
+      - name: run tests under qemu
+        run: docker run --rm --platform linux/${{ matrix.arch }} -e QEMU_CPU=${{ matrix.qemu }} -v /tmp:/t ${{ matrix.image }} /t/t.test -test.v -test.coverprofile=/t/cov.out
+      - name: coverage gate (100%)
+        run: |
+          pct=$(go tool cover -func=/tmp/cov.out | awk '/^total:/{print $3}')
+          echo "coverage=$pct"
+          [ "$pct" = "100.0%" ] || { echo "coverage below 100%"; exit 1; }
+      - name: fuzz all parsers under qemu (native toolchain in container)
+        run: |
+          ver=$(go env GOVERSION); ver=${ver#go}
+          curl -sSL -o /tmp/go-${{ matrix.arch }}.tgz https://go.dev/dl/go${ver}.linux-${{ matrix.arch }}.tar.gz
+          docker run --rm --platform linux/${{ matrix.arch }} -e QEMU_CPU=${{ matrix.qemu }} \
+            -v /tmp:/dl -v "$PWD":/src -w /src -e GOWORK=off -e GOFLAGS=-mod=mod ${{ matrix.image }} bash -c '
+              tar -C /usr/local -xzf /dl/go-${{ matrix.arch }}.tgz
+              export PATH=/usr/local/go/bin:$PATH GOCACHE=/tmp/gocache GOPATH=/tmp/gopath HOME=/tmp
+              go version
+              for fz in FuzzParseUint FuzzAtoi FuzzParseInt FuzzParseFloat; do
+                echo "=== $fz ==="
+                go test -run "^$" -fuzz $fz -fuzztime 20s . || exit 1
+              done
+            '
