@@ -164,6 +164,17 @@ inputs where the SIMD path is actually taken:
 | `ParseFloat` `1234567890.12345` (15 sig) | **318 ns** | 358 ns | **1.13×** |
 | `ParseFloat` `1.7976931348623157` (17 sig) | **361 ns** | 393 ns | **1.09×** |
 
+**Ratio re-confirmation (as of 2026-06-14):** re-benched `-count=6` medians on a
+QEMU x86_64 lima VM (absolutes are TCG-low and not comparable to the table above,
+but the SIMD/stdlib *ratio* is valid). `ParseUint` **16-digit: ~73 ns SIMD vs
+~179 ns stdlib = ~2.45×**; **18-digit: ~80.5 vs ~195 = ~2.42×**; **8-digit:
+delegated, stdlib slightly ahead (~0.86×) — the documented no-win case below the
+16-byte window.** On **native arm64** (this host) there is *no* SIMD kernel
+(scalar fold), yet 16-digit still measures **~2.0×** stdlib (~8.0 vs ~16.5 ns) —
+that win is our tighter scalar fast path vs `strconv`'s per-call bookkeeping, not
+vectorisation. Verdict unchanged: ≥16-digit SIMD beats stdlib ~2.4× on amd64,
+~2.0× on arm64; <16 digits is delegated (no regression).
+
 Honest findings — this is where SIMD does and does **not** pay:
 
 - **The win is large on long inputs (16–19 digits): ~2.2× for `ParseUint`,
@@ -199,6 +210,44 @@ value + error equality vs `strconv`) with a **substantial, honest** SIMD win
 inputs via fallback. Short-string scalar parsing does not benefit from SIMD —
 that is the honest result, and the package delegates those cases so it never
 loses.
+
+### ppc64le / s390x — llvm-mca cycle-model estimate
+
+**Static analysis, NOT a hardware measurement; native perf pending real silicon.**
+No native POWER/Z runner is available and QEMU is not cycle-accurate, so the
+defensible perf signal is a cycle-model estimate. Unlike the streaming kernels,
+`parse16` is a **straight-line, single-call helper** (it folds one 16-digit group
+per call, no inner loop), so the meaningful figure is the **single-invocation
+critical-path latency**, not a steady-state throughput ceiling. The committed
+bodies were extracted from `parse_ppc64le.s` / `parse_s390x.s` and run through
+`llvm-mca -iterations=1` (LLVM 22; production PowerPC + SystemZ backends):
+
+```
+llvm-mca -mtriple=powerpc64le-unknown-linux-gnu -mcpu=pwr9 -iterations=1 <parse16.s>
+llvm-mca -mtriple=s390x-unknown-linux-gnu -mcpu=z14  -iterations=1 <parse16.s>
+```
+
+The ×scalar baseline is the classic `n = n*10 + (c-'0')` loop unrolled over the
+same 16 digits (a 16-deep dependent multiply-add chain):
+
+| arch (cpu) | SIMD `parse16` latency | scalar 16-digit latency | est. ×scalar |
+|---|---:|---:|---:|
+| ppc64le (pwr9) | ~47 cyc | ~116 cyc | **~2.5×** |
+| s390x (z14)    | ~39 cyc | ~84 cyc  | **~2.2×** |
+
+The win comes from collapsing the **16-deep serial `n*10+d` dependency chain**
+into a **logarithmic tree** of pairwise widening multiplies (`VMULEUB`/`VMULOUB`
+→ `VMULEUH`/`VMULOUH` → `VMULEUW`/`VMULOUW` on POWER; `VMLEB`/`VMLOB` →
+`VMLEH`/`VMLOH` → `VMLEF`/`VMLOF` on Z) plus a single `VCHLB`/`VCMPGTUB`
+range-check instead of 16 per-digit compares — depth ~log₂16 vs 16. The two
+arches land close to each other and to the measured amd64 ~2.4× (same algorithm).
+Caveats: latency-only model (no cache/front-end/branch); the per-call constant
+loads (`subD`/`nine`/weights) are excluded as they amortise across calls, and the
+final `MFVSRD`/`VLGVG` GPR-extract + `MULLD` combine are included; the scalar
+baseline is an idealised unrolled chain (real Go scalar with bounds/error checks
+would be slower → ×scalar is a conservative lower bound). All instructions are
+modelled by llvm-mca. Ballpark only — to be replaced by native timings on real
+POWER9 / z14.
 
 ## Regenerating the assembly
 
