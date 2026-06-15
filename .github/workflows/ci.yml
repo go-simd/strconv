@@ -28,27 +28,30 @@ jobs:
           echo "coverage=$pct"
           [ "$pct" = "100.0%" ] || { echo "coverage below 100%"; exit 1; }
 
-  # Emulated cross-arch validation for the SIMD kernels that have no native CI
-  # runner: the POWER VSX kernel (ppc64le) and the z/Architecture vector kernel
-  # (s390x). Mirrors go-simd/matchlen's emulated job: qemu via binfmt, the test
-  # binary cross-compiled and run under a debian:trixie container, with a 100%
-  # coverage gate. Fuzzing runs natively on amd64/arm64 (the `test` job above);
-  # under qemu we run the cross-compiled test binary, whose table + differential
-  # tests validate the VSX/vector kernels against the stdlib bit-for-bit. (Running
-  # the Go toolchain itself under TCG emulation to fuzz is too slow/fragile.)
+  # Emulated cross-arch validation for the architectures that have no native CI
+  # runner: the POWER VSX kernel (ppc64le), the z/Architecture vector kernel
+  # (s390x), and the generic scalar fallback (riscv64, loong64). Mirrors
+  # go-simd/matchlen's emulated job: qemu via binfmt, the test binary
+  # cross-compiled and run under a debian:trixie container, with a 100% coverage
+  # gate. Fuzzing runs natively on amd64/arm64 (the `test` job above); under qemu
+  # we run the cross-compiled test binary, whose table + differential tests
+  # validate every kernel against the stdlib bit-for-bit. (Running the Go
+  # toolchain itself under TCG emulation to fuzz is too slow/fragile.)
   emulated:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
+          - { arch: riscv64, image: "debian:trixie", qemu: "rv64,v=true,vlen=128" }
+          - { arch: loong64, image: "ghcr.io/loong64/debian:trixie", qemu: "la464" }
           - { arch: ppc64le, image: "debian:trixie", qemu: "power9" }
           - { arch: s390x,   image: "debian:trixie", qemu: "qemu" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: { go-version: stable }
-      - run: docker run --privileged --rm tonistiigi/binfmt --install ${{ matrix.arch }}
+      - run: docker run --privileged --rm tonistiigi/binfmt --install all
       - name: cross-compile test binary
         run: CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.arch }} go test -c -cover -o /tmp/t.test .
       - name: run tests under qemu
