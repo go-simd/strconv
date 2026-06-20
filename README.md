@@ -48,7 +48,9 @@ zeros; signs; MaxUint64 / MaxInt64 / MinInt64 boundaries and one past them;
 overflow; empty; a non-digit at every position; `_` separators; bases ≠ 10).
 The suite passes natively on arm64 and amd64, under amd64 SSE (Rosetta + native
 CI), on the **VSX kernel natively on real POWER10 silicon** (GCC Compile Farm,
-VSX, Go 1.26.4), and — for the z/Architecture vector kernel — under qemu
+VSX, Go 1.26.4), **on a real SpacemiT X60 (RVV 1.0) for riscv64** (GCC Compile
+Farm, Go 1.26.4 — here exercising the scalar fold, since the RVV kernel is
+planned), and — for the z/Architecture vector kernel — under qemu
 (`s390x`) in the emulated CI job, where all four fuzzers run against the native
 cross-toolchain too. 100 % statement coverage on every architecture.
 
@@ -95,9 +97,13 @@ fold (NEON/LSX/RVV ports planned). **ppc64le is now validated on real POWER10
 silicon** (GCC Compile Farm, https://portal.cfarm.net/, VSX, Go 1.26.4, June
 2026) — the VSX kernel is proven correct (value- and error-identical to
 `strconv`) on native hardware; no clean native speedup number is quoted here
-(see the cycle-model estimate below). **s390x stays qemu-validated for
-correctness only; native throughput pending** a GitHub-hosted IBM Z runner.
-amd64 and arm64 run on native CI.
+(see the cycle-model estimate below). **riscv64 is now build+test validated on a
+real SpacemiT X60 (RVV 1.0)** (GCC Compile Farm, https://portal.cfarm.net/, Go
+1.26.4, June 2026) — exercising the scalar fold (the RVV kernel is planned), so
+there is **no riscv64 SIMD number to quote**; the value/error-identity and the
+"never regresses vs `strconv`" stance hold on native hardware. **s390x stays
+qemu-validated for correctness only; native throughput pending** a GitHub-hosted
+IBM Z runner. amd64 and arm64 run on native CI.
 
 | op | amd64 | ppc64le | s390x | arm64 / loong64 / riscv64 |
 |---|---|---|---|---|
