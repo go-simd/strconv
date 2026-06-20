@@ -1,3 +1,5 @@
+<p align="center"><img src="https://raw.githubusercontent.com/go-simd/brand/main/social/go-simd.png" alt="go-simd/strconv" width="720"></p>
+
 # strconv
 
 [![CI](https://github.com/go-simd/strconv/actions/workflows/ci.yml/badge.svg)](https://github.com/go-simd/strconv/actions/workflows/ci.yml)
@@ -47,19 +49,10 @@ on arbitrary input, plus an exhaustive table (zero; every length 1..21; leading
 zeros; signs; MaxUint64 / MaxInt64 / MinInt64 boundaries and one past them;
 overflow; empty; a non-digit at every position; `_` separators; bases ≠ 10).
 The suite passes natively on arm64 and amd64, under amd64 SSE (Rosetta + native
-CI), on the **VSX kernel natively on real POWER10 silicon** (GCC Compile Farm,
-VSX, Go 1.26.4), **on a real SpacemiT X60 (RVV 1.0) for riscv64** (GCC Compile
-Farm, Go 1.26.4 — here exercising the scalar fold, since the RVV kernel is
-planned), and — for the z/Architecture vector kernel — under qemu
-(`s390x`) in the emulated CI job, where all four fuzzers run against the native
-cross-toolchain too. 100 % statement coverage on every architecture.
-
-Beyond the six SIMD targets, the scalar fold is now build- and test-validated on
-a **seventh architecture, ppc64 (big-endian)**, on real POWER9 silicon (GCC
-Compile Farm) — value- and error-identical to `strconv` on a big-endian target
-distinct from s390x's vector kernel. ppc64 BE carries no VSX build tag, so it
-takes the scalar path. Framing: **six SIMD targets, validated on seven
-architectures.**
+CI), and — for the VSX and z/Architecture vector kernels — under qemu
+(`ppc64le`/`power9` and `s390x`) in the emulated CI job, where all four fuzzers
+run against the native cross-toolchain too. 100 % statement coverage on every
+architecture.
 
 ### `ParseFloat`: the Eisel-Lemire fast path + a hard delegate discipline
 
@@ -93,17 +86,8 @@ every malformed form, hex, inf/nan, `_`).
 
 The 16-digit decimal fold is implemented for six 64-bit targets. The amd64,
 ppc64le and s390x kernels are SIMD; arm64, loong64 and riscv64 use the scalar
-fold (NEON/LSX/RVV ports planned). **ppc64le is now validated on real POWER10
-silicon** (GCC Compile Farm, https://portal.cfarm.net/, VSX, Go 1.26.4, June
-2026) — the VSX kernel is proven correct (value- and error-identical to
-`strconv`) on native hardware; no clean native speedup number is quoted here
-(see the cycle-model estimate below). **riscv64 is now build+test validated on a
-real SpacemiT X60 (RVV 1.0)** (GCC Compile Farm, https://portal.cfarm.net/, Go
-1.26.4, June 2026) — exercising the scalar fold (the RVV kernel is planned), so
-there is **no riscv64 SIMD number to quote**; the value/error-identity and the
-"never regresses vs `strconv`" stance hold on native hardware. **s390x stays
-qemu-validated for correctness only; native throughput pending** a GitHub-hosted
-IBM Z runner. amd64 and arm64 run on native CI.
+fold (NEON/LSX/RVV ports planned). ppc64le and s390x are **qemu-validated
+(native perf pending)**; amd64 and arm64 run on native CI.
 
 | op | amd64 | ppc64le | s390x | arm64 / loong64 / riscv64 |
 |---|---|---|---|---|
@@ -231,11 +215,9 @@ loses.
 
 ### ppc64le / s390x — llvm-mca cycle-model estimate
 
-**Static analysis, NOT a hardware measurement.** ppc64le is now correctness-
-validated on real POWER10 silicon (above), but no clean native SIMD-vs-scalar
-speedup number was captured there, and no native Z runner exists / QEMU is not
-cycle-accurate, so the defensible perf signal remains a cycle-model estimate.
-Unlike the streaming kernels,
+**Static analysis, NOT a hardware measurement; native perf pending real silicon.**
+No native POWER/Z runner is available and QEMU is not cycle-accurate, so the
+defensible perf signal is a cycle-model estimate. Unlike the streaming kernels,
 `parse16` is a **straight-line, single-call helper** (it folds one 16-digit group
 per call, no inner loop), so the meaningful figure is the **single-invocation
 critical-path latency**, not a steady-state throughput ceiling. The committed
