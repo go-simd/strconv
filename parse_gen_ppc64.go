@@ -2,8 +2,10 @@
 
 // Command gen produces parse_ppc64le.s with go-asmgen: the POWER VSX port of the
 // amd64 parse16 16-digit decimal fold used by the SIMD fast path of ParseUint /
-// Atoi / ParseInt AND (via parse16Window) ParseFloat. VSX is baseline on
-// POWER8+, so there is no runtime feature dispatch.
+// Atoi / ParseInt AND (via parse16Window) ParseFloat. The kernel uses ISA-3.0
+// (POWER9) instructions (LXVB16X), which raise SIGILL on POWER8, so the
+// dispatcher gates it on cpu.PPC64.IsPOWER9 and falls back to the scalar digit
+// loop on POWER8.
 //
 // Signature: parse16(p *byte) (val, ok uint64) — identical to the amd64 kernel.
 // Reads the 16 bytes at p (caller guarantees >= 16 readable bytes); ok = 1 and
@@ -31,20 +33,20 @@
 // widen) followed by an add — the same arithmetic as the amd64 PMADDUBSW /
 // PMADDWL pair:
 //
-//   VSUBUBM '0'                          : 16 chars -> 16 digit bytes (0..9).
-//   validate: a non-digit char, after the wrapping byte subtract, always
-//     becomes > 9 (chars < '0' wrap high, chars > '9' give 10..), so a single
-//     unsigned VCMPGTUB(digit, 9) flags every invalid byte; any nonzero lane
-//     => ok = 0.
-//   stage1 (bytes->halfwords): VMULEUB d,[10,1,..] + VMULOUB d,[10,1,..]
-//     -> 8 halfwords, each 10*d_even + d_odd  (a 2-digit value).
-//   stage2 (halfwords->words): VMULEUH hw,[100,1,..] + VMULOUH -> 4 words,
-//     each 100*hw_even + hw_odd (a 4-digit value).
-//   stage3 (words->dwords): VMULEUW w,[10000,1,..] + VMULOUW -> 2 dwords,
-//     each 10000*w_even + w_odd (an 8-digit value).
-//   combine: the two dwords (dwHi most significant 8 digits, dwLo least) are
-//     moved to GPRs (MFVSRD reads VSR doubleword 0; VSLDOI $8 rotates the second
-//     dword into place) and combined as dwHi*1e8 + dwLo.
+//	VSUBUBM '0'                          : 16 chars -> 16 digit bytes (0..9).
+//	validate: a non-digit char, after the wrapping byte subtract, always
+//	  becomes > 9 (chars < '0' wrap high, chars > '9' give 10..), so a single
+//	  unsigned VCMPGTUB(digit, 9) flags every invalid byte; any nonzero lane
+//	  => ok = 0.
+//	stage1 (bytes->halfwords): VMULEUB d,[10,1,..] + VMULOUB d,[10,1,..]
+//	  -> 8 halfwords, each 10*d_even + d_odd  (a 2-digit value).
+//	stage2 (halfwords->words): VMULEUH hw,[100,1,..] + VMULOUH -> 4 words,
+//	  each 100*hw_even + hw_odd (a 4-digit value).
+//	stage3 (words->dwords): VMULEUW w,[10000,1,..] + VMULOUW -> 2 dwords,
+//	  each 10000*w_even + w_odd (an 8-digit value).
+//	combine: the two dwords (dwHi most significant 8 digits, dwLo least) are
+//	  moved to GPRs (MFVSRD reads VSR doubleword 0; VSLDOI $8 rotates the second
+//	  dword into place) and combined as dwHi*1e8 + dwLo.
 //
 // Run: go run parse_gen_ppc64.go
 package main
@@ -146,19 +148,19 @@ func main() {
 	b.Raw("VADDUHM V8, V9, V10") // V10 = 8 halfwords (2-digit values)
 
 	// stage2: halfwords -> words. even*100 + odd*1.
-	b.Raw("VMULEUH V10, V4, V11") // V11 = even halfwords * 100 (words)
-	b.Raw("VMULOUH V10, V4, V12") // V12 = odd  halfwords * 1   (words)
+	b.Raw("VMULEUH V10, V4, V11")  // V11 = even halfwords * 100 (words)
+	b.Raw("VMULOUH V10, V4, V12")  // V12 = odd  halfwords * 1   (words)
 	b.Raw("VADDUWM V11, V12, V13") // V13 = 4 words (4-digit values)
 
 	// stage3: words -> dwords. even*10000 + odd*1.
-	b.Raw("VMULEUW V13, V5, V14") // V14 = even words * 10000 (dwords)
-	b.Raw("VMULOUW V13, V5, V15") // V15 = odd  words * 1     (dwords)
+	b.Raw("VMULEUW V13, V5, V14")  // V14 = even words * 10000 (dwords)
+	b.Raw("VMULOUW V13, V5, V15")  // V15 = odd  words * 1     (dwords)
 	b.Raw("VADDUDM V14, V15, V16") // V16 = 2 dwords (8-digit values), dw0 = high
 
 	// combine: dwHi = dword 0 (most significant 8 digits), dwLo = dword 1.
-	b.Raw("MFVSRD VS48, R5")        // R5 = dwHi (V16 dword 0)
+	b.Raw("MFVSRD VS48, R5") // R5 = dwHi (V16 dword 0)
 	b.Raw("VSLDOI $8, V16, V16, V17")
-	b.Raw("MFVSRD VS49, R6")        // R6 = dwLo (V16 dword 1)
+	b.Raw("MFVSRD VS49, R6") // R6 = dwLo (V16 dword 1)
 	b.Raw("MOVD $100000000, R7")
 	b.Raw("MULLD R7, R5, R5") // R5 = dwHi * 1e8
 	b.Raw("ADD R6, R5, R5")   // R5 = dwHi*1e8 + dwLo

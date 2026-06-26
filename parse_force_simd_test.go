@@ -16,6 +16,15 @@ import (
 // mis-paired fold would parse these known numbers to a different value and fail
 // here.
 func TestParse16Kernel(t *testing.T) {
+	// parse16 is the raw SIMD kernel, called here with no dispatch guard. On
+	// ppc64le it emits ISA-3.0 (POWER9) instructions (LXVB16X) that SIGILL on a
+	// POWER8 host, so skip when the CPU lacks the required level; the s390x
+	// vector facility is always present on our targets, so the guard is a no-op
+	// there. The POWER9-targeted QEMU job and the native POWER9/POWER10 farm runs
+	// still exercise the kernel.
+	if !simdKernelForceSafe() {
+		t.Skip("CPU lacks the SIMD kernel's required ISA level; covered by POWER9+ runs")
+	}
 	clean := []string{
 		"0000000000000000", "0000000000000001", "0000000000000009",
 		"1234567812345678", "9999999999999999", "1000000000000000",
