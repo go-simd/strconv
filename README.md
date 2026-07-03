@@ -86,8 +86,11 @@ every malformed form, hex, inf/nan, `_`).
 
 The 16-digit decimal fold is implemented for six 64-bit targets. The amd64,
 ppc64le and s390x kernels are SIMD; arm64, loong64 and riscv64 use the scalar
-fold (NEON/LSX/RVV ports planned). ppc64le and s390x are **qemu-validated
-(native perf pending)**; amd64 and arm64 run on native CI.
+fold (NEON/LSX/RVV ports planned). ppc64le is qemu-validated (native perf pending). **s390x is measured on
+real z15** (LPAR guest, VXE2, Ubuntu 6.8, go1.26.4, 2026-07-03):
+`ParseUint/17digit` at **1593 MB/s vs stdlib 359 = 4.4×** and
+`ParseFloat/3.14159` at 302 MB/s vs stdlib 182 = 1.66×. amd64 and arm64
+run on native CI.
 
 | op | amd64 | ppc64le | s390x | arm64 / loong64 / riscv64 |
 |---|---|---|---|---|
@@ -213,7 +216,25 @@ inputs via fallback. Short-string scalar parsing does not benefit from SIMD —
 that is the honest result, and the package delegates those cases so it never
 loses.
 
-### ppc64le / s390x — llvm-mca cycle-model estimate
+### s390x — measured on real z15 (2026-07-03)
+
+Real z15 VXE2 (LPAR guest, Ubuntu 6.8, go1.26.4):
+
+| bench | SIMD | stdlib | ratio |
+|---|---:|---:|---:|
+| `ParseUint/17digit` | **1593 MB/s** | 359 | **4.44×** |
+| `ParseUint/18digit` | 1534 MB/s | 353 | 4.35× |
+| `ParseUint/19digit` | 1536 MB/s | 366 | 4.19× |
+| `ParseUint/16digit` | 1321 MB/s | 347 | 3.81× |
+| `ParseUint/8digit`  | 292 MB/s  | 295 | parity (scalar path) |
+| `ParseUint/20digit` | 359 MB/s  | 369 | parity (scalar path, overflow-check) |
+| `ParseFloat/3.14159` | 302 MB/s | 182 | 1.66× |
+| `ParseFloat/1e308`   | 241 MB/s | 168 | 1.43× |
+
+Optimal SIMD range = 16-19 digits (fits the one-call `parse16` fold).
+Outside that range the scalar fallback runs, at stdlib parity.
+
+### ppc64le — llvm-mca cycle-model estimate
 
 **Static analysis, NOT a hardware measurement; native perf pending real silicon.**
 No native POWER/Z runner is available and QEMU is not cycle-accurate, so the
