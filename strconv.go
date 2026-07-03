@@ -35,13 +35,14 @@ const maxFastDigits = 19
 // byte-identical either way.
 const minFastDigits = 16
 
-// minAtoiDigits is the Atoi-specific floor. strconv.Atoi has an *inlined*
-// digit-at-a-time fast path for inputs shorter than 19 digits (on 64-bit), which
-// the assembly-CALL SIMD kernel cannot beat; only at exactly 19 digits does
-// strconv.Atoi fall back to its slower strconv.ParseInt path, where SIMD wins.
-// So Atoi takes the SIMD path only at 19 digits and delegates otherwise — again
-// never a regression.
-const minAtoiDigits = 19
+// minAtoiDigits is the Atoi-specific floor below which Atoi delegates to
+// strconv.Atoi instead of taking the SIMD digit-fold path. Its value is
+// architecture-specific and defined in atoi_floor_other.go (19) and
+// atoi_floor_s390x.go (minFastDigits, 16). On most arches strconv.Atoi has an
+// *inlined* digit-at-a-time fast path that the assembly-CALL SIMD kernel cannot
+// beat below 19 digits, so the floor is 19; on s390x the vector kernel beats
+// that scalar path from 16 digits up (measured on real z15), so the floor is 16.
+// Either way Atoi never regresses below strconv.Atoi.
 
 // ParseUint is a drop-in for strconv.ParseUint: identical value and error.
 //
