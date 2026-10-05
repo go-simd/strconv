@@ -40,7 +40,7 @@
 //     100*w_hi + w_lo (a 4-digit value, <10000).
 //     The four 4-digit dwords c0..c3 (c0 most significant) are extracted to GP
 //     registers and combined as
-//       hi = c0*10000 + c1 ; lo = c2*10000 + c3 ; val = hi*1e8 + lo
+//     hi = c0*10000 + c1 ; lo = c2*10000 + c3 ; val = hi*1e8 + lo
 //     with three multiplies — cheap, and keeps the asm trivially correct.
 //
 // Run: go run parse_gen.go
@@ -122,18 +122,18 @@ func genSSE(f *emit.File, cLo, cHi, sub, madd1, madd2 string) {
 	b.Raw("CMPL AX, $0xFFFF").Raw("JNE bad") // all sixteen lanes must be digits
 
 	// Fuse: digits = c - '0', then the staged madd fold.
-	b.Raw("MOVOU %s+0(SB), X2", sub).Raw("PSUBB X2, X0")        // X0 = 16 digit bytes (0..9)
-	b.Raw("MOVOU %s+0(SB), X2", madd1).Raw("PMADDUBSW X0, X2")  // X2 = 8 words: 2-digit values
-	b.Raw("MOVOU %s+0(SB), X4", madd2).Raw("PMADDWL X4, X2")    // X2 = 4 dwords: 4-digit values c0..c3
+	b.Raw("MOVOU %s+0(SB), X2", sub).Raw("PSUBB X2, X0")       // X0 = 16 digit bytes (0..9)
+	b.Raw("MOVOU %s+0(SB), X2", madd1).Raw("PMADDUBSW X0, X2") // X2 = 8 words: 2-digit values
+	b.Raw("MOVOU %s+0(SB), X4", madd2).Raw("PMADDWL X4, X2")   // X2 = 4 dwords: 4-digit values c0..c3
 
 	// Extract the four 4-digit dwords (c0 most significant) and combine.
-	b.Raw("MOVL X2, AX")     // AX = c0 (most significant 4 digits)
+	b.Raw("MOVL X2, AX")       // AX = c0 (most significant 4 digits)
 	b.Raw("PEXTRD $1, X2, CX") // CX = c1
 	b.Raw("PEXTRD $2, X2, DX") // DX = c2
 	b.Raw("PEXTRD $3, X2, DI") // DI = c3 (least significant 4 digits)
 	b.Raw("IMULQ $10000, AX")  // hi = c0*10000 + c1
 	b.Raw("ADDQ CX, AX")
-	b.Raw("IMULQ $10000, DX")  // lo = c2*10000 + c3
+	b.Raw("IMULQ $10000, DX") // lo = c2*10000 + c3
 	b.Raw("ADDQ DI, DX")
 	b.Raw("IMULQ $100000000, AX") // val = hi*1e8 + lo
 	b.Raw("ADDQ DX, AX")

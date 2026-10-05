@@ -28,19 +28,19 @@
 // mirroring the amd64 PMADDUBSW/PMADDWL pair — each fold stage is an even/odd
 // widening multiply pair followed by an add:
 //
-//   VSB '0'                              : 16 chars -> 16 digit bytes (0..9).
-//   validate: after the wrapping byte subtract every non-digit char becomes
-//     > 9, so a single unsigned VCHLB(digit, 9) flags every invalid byte; any
-//     nonzero lane => ok = 0.
-//   stage1 (bytes->halfwords): VMLEB d,[10,1,..] + VMLOB d,[10,1,..] -> 8
-//     halfwords, each 10*d_even + d_odd (a 2-digit value).
-//   stage2 (halfwords->words): VMLEH hw,[100,1,..] + VMLOH -> 4 words, each
-//     100*hw_even + hw_odd (a 4-digit value).
-//   stage3 (words->dwords): VMLEF w,[10000,1,..] + VMLOF -> 2 dwords, each
-//     10000*w_even + w_odd (an 8-digit value).
-//   combine: VLGVG extracts dword element 0 (most significant 8 digits) and
-//     dword element 1 (least significant 8 digits) to GPRs; the value is
-//     dwHi*1e8 + dwLo.
+//	VSB '0'                              : 16 chars -> 16 digit bytes (0..9).
+//	validate: after the wrapping byte subtract every non-digit char becomes
+//	  > 9, so a single unsigned VCHLB(digit, 9) flags every invalid byte; any
+//	  nonzero lane => ok = 0.
+//	stage1 (bytes->halfwords): VMLEB d,[10,1,..] + VMLOB d,[10,1,..] -> 8
+//	  halfwords, each 10*d_even + d_odd (a 2-digit value).
+//	stage2 (halfwords->words): VMLEH hw,[100,1,..] + VMLOH -> 4 words, each
+//	  100*hw_even + hw_odd (a 4-digit value).
+//	stage3 (words->dwords): VMLEF w,[10000,1,..] + VMLOF -> 2 dwords, each
+//	  10000*w_even + w_odd (an 8-digit value).
+//	combine: VLGVG extracts dword element 0 (most significant 8 digits) and
+//	  dword element 1 (least significant 8 digits) to GPRs; the value is
+//	  dwHi*1e8 + dwLo.
 //
 // Run: go run parse_gen_s390x.go
 package main
